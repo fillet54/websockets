@@ -1,10 +1,13 @@
+import sys
 import socket
 import string, re
 import hashlib, base64
+import threading
+import struct
 
 from WebSocketConnection import WebSocketConnection
 
-class WebSocketServer:
+class WebSocketServer(object):
     
     WS_MAGIC_STRING = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -16,13 +19,38 @@ class WebSocketServer:
         self.s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.s.bind((host, port))
         self.s.listen(5)
+        self.factory = None 
+        self.clients = dict()
+
+    def runForever(self):
+        while True:
+            try:
+                client = self.accept()
+                runner = WebSocketClientRunner(client)
+                self.clients[client] = runner
+                t = threading.Thread(target=runner.run)
+                t.daemon = True
+                t.start()
+            except socket.error:
+                return
 
     def accept(self):
         (client, address) = self.s.accept()
-        if self.send_handshake(client):
-            return WebSocketConnection(client)
+        if self.send_handshake(client) and self.factory is not None:
+            return WebSocketNofityOnCloseClient(self.factory(client, address), self.onClientClose)
         else:
             return None
+
+    def close(self):
+        [c.close() for c in self.clients.keys()]
+        self.s.close()
+
+    def onClientClose(self, client):
+        print "Closing Client"
+        try:
+            del self.clients[client]
+        except KeyError:
+            print "ERROR"
 
     def send_handshake(self, client):
         lines = self.splitlines(client)
@@ -85,4 +113,64 @@ class WebSocketServer:
                     buffer += more
         if buffer:
             yield buffer
+
+class WebSocketClientRunner(object):
+    def __init__(self, ws_conn):
+        self.ws_conn = ws_conn
+
+    def run(self):
+        while True:
+            print self.ws_conn
+            try:
+                msg = self.ws_conn.recv(timeout=15.0)
+                if msg == "":
+                    self.ws_conn.close()
+                    return
+                elif msg is not None:
+                    print struct.unpack("%dB" % len(msg), msg)
+                    self.ws_conn.onMessage(msg)
+
+            except socket.timeout:
+                print "Timeout!"
+            except socket.error:
+                self.ws_conn.close()
+                return
+
+
+    def close(self):
+        self.ws_conn.close()
+        self.ws_conn.onClose()
+
+class WebSocketNofityOnCloseClient(WebSocketConnection):
+    def __init__(self, ws_conn, onCloseCallback):
+        self.ws_conn = ws_conn
+        self.onCloseCallback = onCloseCallback
+
+    def onOpen(self):
+        try:
+            self.ws_conn.onOpen()
+        except:
+            pass
+
+    def onMessage(self, message):
+        try:
+            self.ws_conn.onMessage(message)
+        except:
+            pass
+
+    def onClose(self):
+        self.onCloseCallback(self)
+
+    def recv(self, timeout=None):
+        return self.ws_conn.recv(timeout)
+
+    def send(self, message):
+        return self.ws_conn.send(message)
+
+    def close(self):
+        self.onClose()
+        try:
+            self.ws_conn.close()
+        except:
+            pass
 
