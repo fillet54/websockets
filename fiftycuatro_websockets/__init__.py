@@ -1,2 +1,3 @@
 
 from WebSocketServer import WebSocketServer
+from WebSocketConnection import WebSocketConnection
