@@ -119,6 +119,7 @@ class WebSocketClientRunner(object):
         self.ws_conn = ws_conn
 
     def run(self):
+        self.ws_conn.onOpen()
         while True:
             print self.ws_conn
             try:
